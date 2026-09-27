@@ -4,8 +4,7 @@ parallel-jobs = 1
 [YouTube-Morphe]
 version = "latest"
 excluded-patches = [
-    "custom-branding-youtube-name",
-    "custom-branding-youtube-icon"
+    "custom-branding"
 ]
 app-name = "YouTube"
 patches-source = "MorpheApp/morphe-patches"
