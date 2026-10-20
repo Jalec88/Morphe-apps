@@ -67,6 +67,16 @@ def backfill(directory, repo):
                    "--pattern", asset["name"], "--dir", str(directory))
 
 
+def app_notes(directory):
+    labels = {"googlephotos-devanced": "GooglePhotos", "youtube-morphe": "YouTube-Morphe",
+              "music-morphe": "Music-Morphe", "reddit-morphe": "Reddit-Morphe",
+              "twitter-piko": "Twitter"}
+    versions = sorted({identify(p.name) for p in Path(directory).glob("*.apk")
+                       if identify(p.name)})
+    return "\n".join(f"{labels.get(app, app)}: {version}  "
+                     for app, version in versions)
+
+
 def carry_forward(directory, repo):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -77,6 +87,8 @@ def carry_forward(directory, repo):
         for apk in Path(previous).glob("*.apk"):
             if identify(apk.name)[0] not in current_apps:
                 shutil.copy2(apk, directory / apk.name)
+    with Path("build.md").open("a") as notes:
+        notes.write("\nAvailable APKs:\n" + app_notes(directory) + "\n")
 
 
 def publish_aggregate(directory, repo):
@@ -92,7 +104,7 @@ def publish_aggregate(directory, repo):
             return
     gh("release", "create", str(int(latest) + 1), *(str(p) for p in files),
        "--repo", repo, "--title", "Release", "--latest",
-       "--notes", "Compatibility release for existing Obtainium configurations. "
+       "--notes", app_notes(directory) + "\n\nCompatibility release for existing Obtainium configurations. "
        "Includes the latest previously published APK for each app, unchanged. "
        "The numeric tag is a build number, not the APK version.")
 
