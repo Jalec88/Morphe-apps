@@ -36,11 +36,22 @@ class PublishingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, name).touch()
             with patch.object(module, "gh", side_effect=[
-                json.dumps([{"tagName": "googlephotos-devanced-v7.92.0.977185651"}]),
+                json.dumps([{"tagName": "7.92.0.977185651"}]),
                 json.dumps({"assets": [{"name": name}]}),
+                "",
             ]) as gh:
                 module.publish(directory, "owner/repo")
-                self.assertEqual(gh.call_count, 2)
+                self.assertEqual(gh.call_count, 3)
+
+    def test_photos_publishes_exact_version_and_original_note_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "googlephotos-devanced-v7.92.0.977185651-all.apk").touch()
+            with patch.object(module, "gh", return_value="[]") as gh:
+                module.publish(directory, "owner/repo")
+                args = gh.call_args.args
+                self.assertEqual(args[:3], ("release", "create", "7.92.0.977185651"))
+                self.assertIn("GooglePhotos: 7.92.0.977185651", args[-1])
+                self.assertNotIn("--clobber", args)
 
     def test_backfill_finds_photos_behind_twitter_only_releases(self):
         def release(tag, names):
