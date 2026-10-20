@@ -66,6 +66,7 @@ jobs:
           BODY: ${{ steps.get_output.outputs.BUILD_LOG }}
         run: |
           python3 scripts/publish_apps.py --carry-forward
+          BODY="$(cat build.md)"
           ls -lh ./build/*
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Release" --notes "$BODY"
