@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Publish APKs with app-specific tags; keep numeric releases for modules."""
+"""Publish actual APK versions; retain historical downloads as prereleases."""
 import argparse
 import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import tempfile
 
 APK = re.compile(r"^(.+)-v(\d[^/]*)-(all|arm64-v8a|arm-v7a|x86_64|x86)\.apk$")
+LABELS = {"googlephotos-devanced": "GooglePhotos", "youtube-morphe": "YouTube-Morphe",
+          "music-morphe": "Music-Morphe", "reddit-morphe": "Reddit-Morphe",
+          "twitter-piko": "Twitter"}
 
 
 def identify(name):
@@ -21,110 +23,106 @@ def gh(*args):
     return subprocess.check_output(["gh", *args], text=True)
 
 
-def publish(directory, repo):
-    groups = {}
-    for apk in sorted(Path(directory).glob("*.apk")):
-        key = identify(apk.name)
-        if key is None:
-            raise ValueError(f"Unexpected APK name: {apk.name}")
-        groups.setdefault(key, []).append(apk)
-    existing = {r["tagName"] for r in json.loads(gh(
-        "release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName"
-    ))}
-    for (app, version), files in groups.items():
-        tag = f"{app}-v{version}"
-        if tag in existing:
-            assets = json.loads(gh("release", "view", tag, "--repo", repo,
-                                   "--json", "assets"))["assets"]
-            names = {a["name"] for a in assets}
-            missing = [str(p) for p in files if p.name not in names]
-            if missing:
-                gh("release", "upload", tag, *missing, "--repo", repo)
-        else:
-            gh("release", "create", tag, *(str(p) for p in files),
-               "--repo", repo, "--title", f"{app} {version}", "--latest=false",
-               "--notes", f"{app} {version}\n\nAPK release for Obtainium. "
-               "The tag contains the application version, not the module build number.")
-
-
-def backfill(directory, repo):
-    # Read all pages: a slowly changing app can be absent from many recent builds.
+def releases(repo):
     pages = json.loads(gh("api", "--paginate", "--slurp",
-                          f"repos/{repo}/releases?per_page=100"))
-    releases = [r for page in pages for r in page
-                if r["tag_name"].isdigit() and not r["draft"] and not r["prerelease"]]
-    releases.sort(key=lambda r: int(r["tag_name"]), reverse=True)
+                         f"repos/{repo}/releases?per_page=100"))
+    return [r for page in pages for r in page if not r["draft"]]
+
+
+def latest_assets(items):
+    # Numeric tags remain the build history, even after being marked prerelease.
+    builds = sorted((r for r in items if r["tag_name"].isdigit()),
+                    key=lambda r: int(r["tag_name"]), reverse=True)
     selected = {}
-    for release in releases:
+    result = []
+    for release in builds:
         for asset in release["assets"]:
             key = identify(asset["name"])
-            if key is None:
+            if key is None or key[0] not in LABELS:
                 continue
             app, version = key
             selected.setdefault(app, (version, release["tag_name"]))
             if selected[app] == (version, release["tag_name"]):
-                gh("release", "download", release["tag_name"], "--repo", repo,
-                   "--pattern", asset["name"], "--dir", str(directory))
+                result.append((release["tag_name"], asset["name"]))
+    return result
 
 
-def app_notes(directory):
-    labels = {"googlephotos-devanced": "GooglePhotos", "youtube-morphe": "YouTube-Morphe",
-              "music-morphe": "Music-Morphe", "reddit-morphe": "Reddit-Morphe",
-              "twitter-piko": "Twitter"}
-    versions = sorted({identify(p.name) for p in Path(directory).glob("*.apk")
-                       if identify(p.name)})
-    return "\n".join(f"{labels.get(app, app)}: {version}  "
-                     for app, version in versions)
+def backfill(directory, repo):
+    for tag, name in latest_assets(releases(repo)):
+        gh("release", "download", tag, "--repo", repo,
+           "--pattern", name, "--dir", str(directory))
 
 
-def carry_forward(directory, repo):
-    directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
-    current_apps = {identify(p.name)[0] for p in directory.glob("*.apk")
-                    if identify(p.name)}
-    with tempfile.TemporaryDirectory() as previous:
-        backfill(previous, repo)
-        for apk in Path(previous).glob("*.apk"):
-            if identify(apk.name)[0] not in current_apps:
-                shutil.copy2(apk, directory / apk.name)
-    with Path("build.md").open("a") as notes:
-        notes.write("\nAvailable APKs:\n" + app_notes(directory) + "\n")
+def publish(directory, repo):
+    groups = {}
+    for apk in sorted(Path(directory).glob("*.apk")):
+        key = identify(apk.name)
+        if key is None or key[0] not in LABELS:
+            raise ValueError(f"Unexpected APK name: {apk.name}")
+        groups.setdefault(key[1], []).append(apk)
+    existing = {r["tag_name"]: r for r in releases(repo)}
+    for version, files in groups.items():
+        names = {identify(p.name)[0] for p in files}
+        notes = "\n".join(f"{LABELS[app]}: {version}  " for app in sorted(names))
+        notes += "\n\n" + " ".join(sorted(names))
+        notes += "\n\nThe release tag is the application version. APKs retain their original signatures."
+        if version in existing:
+            release = existing[version]
+            asset_names = {a["name"] for a in release["assets"]}
+            missing = [str(p) for p in files if p.name not in asset_names]
+            if missing:
+                gh("release", "upload", version, *missing, "--repo", repo)
+            # Preserve notes of any other app sharing this exact version tag.
+            old_notes = release.get("body") or ""
+            if any(LABELS[app] not in old_notes for app in names):
+                gh("release", "edit", version, "--repo", repo,
+                   "--notes", old_notes + "\n\n" + notes)
+        else:
+            gh("release", "create", version, *(str(p) for p in files),
+               "--repo", repo, "--title", f"Release {version}",
+               "--latest=false", "--notes", notes)
 
 
-def publish_aggregate(directory, repo):
-    releases = json.loads(gh("release", "list", "--repo", repo,
-                            "--limit", "1000", "--json", "tagName"))
-    tags = [int(r["tagName"]) for r in releases if r["tagName"].isdigit()]
-    latest = str(max(tags, default=0))
-    files = sorted(Path(directory).glob("*.apk"))
-    if tags:
-        assets = json.loads(gh("release", "view", latest, "--repo", repo,
-                              "--json", "assets"))["assets"]
-        if {p.name for p in files}.issubset({a["name"] for a in assets}):
-            return
-    gh("release", "create", str(int(latest) + 1), *(str(p) for p in files),
-       "--repo", repo, "--title", "Release", "--latest",
-       "--notes", app_notes(directory) + "\n\nCompatibility release for existing Obtainium configurations. "
-       "Includes the latest previously published APK for each app, unchanged. "
-       "The numeric tag is a build number, not the APK version.")
+def reconcile_history(repo):
+    items = releases(repo)
+    expected = latest_assets(items)
+    covered_apps = {identify(name)[0] for _, name in expected}
+    if covered_apps != set(LABELS):
+        raise RuntimeError("Missing app build history; refusing to change release visibility")
+    keep = {identify(name)[1] for _, name in expected}
+    by_tag = {r["tag_name"]: r for r in items}
+    for _, name in expected:
+        version = identify(name)[1]
+        if version not in by_tag or name not in {a["name"] for a in by_tag[version]["assets"]}:
+            raise RuntimeError(f"Missing canonical APK {name}; retaining historical releases")
+    # Only change metadata after every current app/architecture is available.
+    for release in items:
+        tag = release["tag_name"]
+        if tag in keep:
+            if release["prerelease"]:
+                gh("release", "edit", tag, "--repo", repo,
+                   "--prerelease=false", "--latest=false")
+        elif not release["prerelease"]:
+            gh("release", "edit", tag, "--repo", repo,
+               "--prerelease", "--latest=false")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", nargs="?", default="build")
     parser.add_argument("--backfill", action="store_true")
-    parser.add_argument("--carry-forward", action="store_true")
+    parser.add_argument("--migrate-history", action="store_true",
+                        help="Retire legacy stable tags only after validating existing client migration")
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     if args.backfill:
         with tempfile.TemporaryDirectory() as directory:
             backfill(directory, repo)
             publish(directory, repo)
-            publish_aggregate(directory, repo)
-    elif args.carry_forward:
-        carry_forward(args.directory, repo)
     else:
         publish(args.directory, repo)
+    if args.migrate_history:
+        reconcile_history(repo)
 
 
 if __name__ == "__main__":
