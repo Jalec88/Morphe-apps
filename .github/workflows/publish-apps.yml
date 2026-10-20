@@ -1,0 +1,25 @@
+name: Publish existing APKs for Obtainium
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/publish_apps.py
+      - .github/workflows/publish-apps.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-existing-apps
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Publish latest existing APK for each app
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/publish_apps.py --backfill

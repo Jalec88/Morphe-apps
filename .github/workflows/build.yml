@@ -73,35 +73,10 @@ jobs:
             gh release create "$TAG" ./build/* --title "Release" --notes "$BODY"
           fi
 
-      - name: Publish Google Photos APK separately
+      - name: Publish APKs with application versions for Obtainium
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          files=(./build/googlephotos-devanced-v*-all.apk)
-          if (( ${#files[@]} == 0 )); then
-            echo "No Google Photos APK in this build; nothing to publish."
-            exit 0
-          fi
-          for apk in "${files[@]}"; do
-            file="${apk##*/}"
-            version="${file#googlephotos-devanced-v}"
-            version="${version%-all.apk}"
-            if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
-              echo "Unexpected Google Photos version: $file" >&2
-              exit 1
-            fi
-            tag="googlephotos-v${version}"
-            if gh release view "$tag" >/dev/null 2>&1; then
-              echo "Google Photos $version already published; keeping original release."
-            else
-              gh release create "$tag" "$apk" \
-                --title "GooglePhotos $version" \
-                --notes "Google Photos De-Vanced $version"
-            fi
-          done
+        run: python3 scripts/publish_apps.py
 
       - name: Update modules changelog and update json
         id: update_config
