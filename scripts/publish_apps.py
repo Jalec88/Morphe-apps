@@ -32,7 +32,7 @@ def publish(directory, repo):
         "release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName"
     ))}
     for (app, version), files in groups.items():
-        tag = f"{app}-v{version}"
+        tag = version if app == "googlephotos-devanced" else f"{app}-v{version}"
         if tag in existing:
             assets = json.loads(gh("release", "view", tag, "--repo", repo,
                                    "--json", "assets"))["assets"]
