@@ -70,11 +70,15 @@ jobs:
           shopt -s nullglob
           release_files=()
           for output in ./build/*; do
-            [[ "${output##*/}" == googlephotos-devanced-v*.apk ]] && continue
+            case "${output##*/}" in
+              googlephotos-devanced-v*.apk|music-morphe-v*.apk|youtube-morphe-v*.apk|reddit-morphe-v*.apk) continue ;;
+            esac
             release_files+=("$output")
           done
           ls -lh ./build/*
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if (( ${#release_files[@]} == 0 )); then
+            echo "APKs are published under application version tags."
+          elif gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Release" --notes "$BODY"
             gh release upload "$TAG" "${release_files[@]}" --clobber
           else
@@ -138,6 +142,13 @@ jobs:
           for OUTPUT in *; do
             DL_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}/${OUTPUT}"
             if [[ $OUTPUT = *.apk ]]; then
+              case "$OUTPUT" in
+                googlephotos-devanced-v*|music-morphe-v*|youtube-morphe-v*|reddit-morphe-v*)
+                  VERSION="${OUTPUT#*-v}"
+                  VERSION="${VERSION%-*.apk}"
+                  DL_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${VERSION}/${OUTPUT}"
+                  ;;
+              esac
               APKS+="${NL}📦[${OUTPUT}](${DL_URL})"
             elif [[ $OUTPUT = *.zip ]]; then
               MODULES+="${NL}📦[${OUTPUT}](${DL_URL})"
