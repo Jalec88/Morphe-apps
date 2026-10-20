@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -66,16 +67,50 @@ def backfill(directory, repo):
                    "--pattern", asset["name"], "--dir", str(directory))
 
 
+def carry_forward(directory, repo):
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    current_apps = {identify(p.name)[0] for p in directory.glob("*.apk")
+                    if identify(p.name)}
+    with tempfile.TemporaryDirectory() as previous:
+        backfill(previous, repo)
+        for apk in Path(previous).glob("*.apk"):
+            if identify(apk.name)[0] not in current_apps:
+                shutil.copy2(apk, directory / apk.name)
+
+
+def publish_aggregate(directory, repo):
+    releases = json.loads(gh("release", "list", "--repo", repo,
+                            "--limit", "1000", "--json", "tagName"))
+    tags = [int(r["tagName"]) for r in releases if r["tagName"].isdigit()]
+    latest = str(max(tags, default=0))
+    files = sorted(Path(directory).glob("*.apk"))
+    if tags:
+        assets = json.loads(gh("release", "view", latest, "--repo", repo,
+                              "--json", "assets"))["assets"]
+        if {p.name for p in files}.issubset({a["name"] for a in assets}):
+            return
+    gh("release", "create", str(int(latest) + 1), *(str(p) for p in files),
+       "--repo", repo, "--title", "Release", "--latest",
+       "--notes", "Compatibility release for existing Obtainium configurations. "
+       "Includes the latest previously published APK for each app, unchanged. "
+       "The numeric tag is a build number, not the APK version.")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", nargs="?", default="build")
     parser.add_argument("--backfill", action="store_true")
+    parser.add_argument("--carry-forward", action="store_true")
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     if args.backfill:
         with tempfile.TemporaryDirectory() as directory:
             backfill(directory, repo)
             publish(directory, repo)
+            publish_aggregate(directory, repo)
+    elif args.carry_forward:
+        carry_forward(args.directory, repo)
     else:
         publish(args.directory, repo)
 
