@@ -9,6 +9,8 @@ import shutil
 import subprocess
 import tempfile
 
+REAL_VERSION_APPS = {"googlephotos-devanced", "music-morphe", "youtube-morphe", "reddit-morphe"}
+
 APK = re.compile(r"^(.+)-v(\d[^/]*)-(all|arm64-v8a|arm-v7a|x86_64|x86)\.apk$")
 
 
@@ -33,7 +35,7 @@ def publish(directory, repo):
     ))}
     for (app, version), files in groups.items():
         display_name = "GooglePhotos" if app == "googlephotos-devanced" else app
-        tag = version if app == "googlephotos-devanced" else f"{app}-v{version}"
+        tag = version if app in REAL_VERSION_APPS else f"{app}-v{version}"
         if tag in existing:
             assets = json.loads(gh("release", "view", tag, "--repo", repo,
                                    "--json", "assets"))["assets"]
@@ -56,8 +58,14 @@ def backfill(directory, repo):
     pages = json.loads(gh("api", "--paginate", "--slurp",
                           f"repos/{repo}/releases?per_page=100"))
     releases = [r for page in pages for r in page
-                if r["tag_name"].isdigit() and not r["draft"] and not r["prerelease"]]
-    releases.sort(key=lambda r: int(r["tag_name"]), reverse=True)
+                if not r["draft"] and not r["prerelease"]]
+    canonical = [r for r in releases if any(
+        identify(a["name"]) and identify(a["name"])[0] in REAL_VERSION_APPS
+        and r["tag_name"] == identify(a["name"])[1] for a in r["assets"])]
+    canonical.sort(key=lambda r: r.get("published_at", ""), reverse=True)
+    numeric = sorted((r for r in releases if r["tag_name"].isdigit()),
+                     key=lambda r: int(r["tag_name"]), reverse=True)
+    releases = canonical + numeric
     selected = {}
     for release in releases:
         for asset in release["assets"]:
@@ -95,24 +103,6 @@ def carry_forward(directory, repo):
         notes.write("\nAvailable APKs:\n" + app_notes(directory) + "\n")
 
 
-def publish_aggregate(directory, repo):
-    releases = json.loads(gh("release", "list", "--repo", repo,
-                            "--limit", "1000", "--json", "tagName"))
-    tags = [int(r["tagName"]) for r in releases if r["tagName"].isdigit()]
-    latest = str(max(tags, default=0))
-    files = sorted(Path(directory).glob("*.apk"))
-    if tags:
-        assets = json.loads(gh("release", "view", latest, "--repo", repo,
-                              "--json", "assets"))["assets"]
-        if {p.name for p in files}.issubset({a["name"] for a in assets}):
-            return
-    gh("release", "create", str(int(latest) + 1), *(str(p) for p in files),
-       "--repo", repo, "--title", "Release", "--latest",
-       "--notes", app_notes(directory) + "\n\nCompatibility release for existing Obtainium configurations. "
-       "Includes the latest previously published APK for each app, unchanged. "
-       "The numeric tag is a build number, not the APK version.")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", nargs="?", default="build")
@@ -124,7 +114,6 @@ def main():
         with tempfile.TemporaryDirectory() as directory:
             backfill(directory, repo)
             publish(directory, repo)
-            publish_aggregate(directory, repo)
     elif args.carry_forward:
         carry_forward(args.directory, repo)
     else:
