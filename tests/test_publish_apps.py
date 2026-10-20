@@ -27,7 +27,7 @@ class PublishingTests(unittest.TestCase):
                 module.publish(directory, "owner/repo")
                 creates = [c.args for c in gh.call_args_list if c.args[1] == "create"]
                 self.assertEqual(len(creates), 1)
-                self.assertEqual(creates[0][2], "music-morphe-v9.20.53")
+                self.assertEqual(creates[0][2], "9.20.53")
                 self.assertIn("--latest=false", creates[0])
                 self.assertEqual(sum(a.endswith(".apk") for a in creates[0]), 2)
 
