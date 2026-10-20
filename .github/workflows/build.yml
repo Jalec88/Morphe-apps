@@ -67,12 +67,18 @@ jobs:
         run: |
           python3 scripts/publish_apps.py --carry-forward
           BODY="$(cat build.md)"
+          shopt -s nullglob
+          release_files=()
+          for output in ./build/*; do
+            [[ "${output##*/}" == googlephotos-devanced-v*.apk ]] && continue
+            release_files+=("$output")
+          done
           ls -lh ./build/*
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "Release" --notes "$BODY"
-            gh release upload "$TAG" ./build/* --clobber
+            gh release upload "$TAG" "${release_files[@]}" --clobber
           else
-            gh release create "$TAG" ./build/* --title "Release" --notes "$BODY"
+            gh release create "$TAG" "${release_files[@]}" --title "Release" --notes "$BODY"
           fi
 
       - name: Publish APKs with application versions for Obtainium
