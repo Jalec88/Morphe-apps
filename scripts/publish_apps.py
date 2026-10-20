@@ -32,18 +32,22 @@ def publish(directory, repo):
         "release", "list", "--repo", repo, "--limit", "1000", "--json", "tagName"
     ))}
     for (app, version), files in groups.items():
+        display_name = "GooglePhotos" if app == "googlephotos-devanced" else app
         tag = version if app == "googlephotos-devanced" else f"{app}-v{version}"
         if tag in existing:
             assets = json.loads(gh("release", "view", tag, "--repo", repo,
                                    "--json", "assets"))["assets"]
             names = {a["name"] for a in assets}
+            if app == "googlephotos-devanced":
+                gh("release", "edit", tag, "--repo", repo, "--notes",
+                   f"GooglePhotos: {version}\n\nOriginal signed Google Photos APK. Version tag matches the app version.")
             missing = [str(p) for p in files if p.name not in names]
             if missing:
                 gh("release", "upload", tag, *missing, "--repo", repo)
         else:
             gh("release", "create", tag, *(str(p) for p in files),
                "--repo", repo, "--title", f"{app} {version}", "--latest=false",
-               "--notes", f"{app} {version}\n\nAPK release for Obtainium. "
+               "--notes", f"{display_name}: {version}\n\nAPK release for Obtainium. "
                "The tag contains the application version, not the module build number.")
 
 
