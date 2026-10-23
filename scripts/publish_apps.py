@@ -19,6 +19,50 @@ def identify(name):
     return (match[1], match[2]) if match else None
 
 
+def release_app(release):
+    keys = {identify(a["name"]) for a in release["assets"]
+            if identify(a["name"])}
+    if len(keys) != 1:
+        return None
+    app, version = next(iter(keys))
+    if app not in REAL_VERSION_APPS | {"twitter-piko"}:
+        return None
+    if release["tag_name"] not in {version, f"{app}-v{version}"}:
+        return None
+    return app
+
+
+def historical_releases(releases):
+    stable = [r for r in releases if not r["draft"] and not r["prerelease"]]
+    current = {}
+    for release in sorted(stable, key=lambda r: r.get("published_at") or "", reverse=True):
+        app = release_app(release)
+        if app:
+            current.setdefault(app, release)
+    if set(current) != REAL_VERSION_APPS | {"twitter-piko"}:
+        raise RuntimeError("Refusing history changes: a current app release is missing")
+    # Legacy mixed APK builds stay available. New module/Twitter build numbers
+    # and superseded dedicated releases must not crowd out stable app releases.
+    oldest_current = min(r.get("published_at") or "" for r in current.values())
+    historical = []
+    for release in stable:
+        app = release_app(release)
+        superseded = app and release["tag_name"] != current[app]["tag_name"]
+        numbered_build = (release["tag_name"].isdigit()
+                          and (release.get("published_at") or "") > oldest_current)
+        if superseded or numbered_build:
+            historical.append(release)
+    return historical
+
+
+def maintain_release_history(repo):
+    pages = json.loads(gh("api", "--paginate", "--slurp",
+                          f"repos/{repo}/releases?per_page=100"))
+    for release in historical_releases([r for page in pages for r in page]):
+        gh("release", "edit", release["tag_name"], "--repo", repo,
+           "--prerelease", "--latest=false")
+
+
 def gh(*args):
     return subprocess.check_output(["gh", *args], text=True)
 
@@ -59,9 +103,8 @@ def backfill(directory, repo):
                           f"repos/{repo}/releases?per_page=100"))
     releases = [r for page in pages for r in page
                 if not r["draft"] and not r["prerelease"]]
-    canonical = [r for r in releases if any(
-        identify(a["name"]) and identify(a["name"])[0] in REAL_VERSION_APPS
-        and r["tag_name"] == identify(a["name"])[1] for a in r["assets"])]
+    canonical = [r for r in releases if release_app(r)
+                 and (r["tag_name"][0].isdigit() or release_app(r) == "twitter-piko")]
     canonical.sort(key=lambda r: r.get("published_at", ""), reverse=True)
     numeric = sorted((r for r in releases if r["tag_name"].isdigit()),
                      key=lambda r: int(r["tag_name"]), reverse=True)
@@ -118,6 +161,8 @@ def main():
         carry_forward(args.directory, repo)
     else:
         publish(args.directory, repo)
+    if not args.carry_forward:
+        maintain_release_history(repo)
 
 
 if __name__ == "__main__":
