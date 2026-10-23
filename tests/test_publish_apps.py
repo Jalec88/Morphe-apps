@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import tempfile
@@ -12,6 +13,60 @@ spec.loader.exec_module(module)
 
 
 class PublishingTests(unittest.TestCase):
+    def test_other_apps_and_numbered_builds_do_not_accumulate_health_flags(self):
+        def release(tag, day, *names):
+            return dict(tag_name=tag, published_at=f"2026-10-{day}",
+                        draft=False, prerelease=False,
+                        assets=[dict(name=name, browser_download_url=f"https://example/{tag}/{name}")
+                                for name in names])
+        photos = "googlephotos-devanced-v7.92-all.apk"
+        music = "music-morphe-v9.20-arm64-v8a.apk"
+        youtube = "youtube-morphe-v21.20-all.apk"
+        reddit = "reddit-morphe-v2026.24-all.apk"
+        twitter = "twitter-piko-v12.36-all.apk"
+        rows = [release("7.92", "20T05:50", photos),
+                release("9.20", "20T05:59", music,
+                        "music-morphe-v9.20-arm-v7a.apk"),
+                release("21.20", "20T06:01", youtube),
+                release("2026.24", "20T06:00", reddit),
+                release("27", "22T20:00", "twitter-piko-v12.35-all.apk"),
+                release("28", "23T19:54", twitter),
+                release("twitter-piko-v12.36", "23T19:55", twitter),
+                release("26", "20T05:11", photos, music, youtube, reddit),
+                release("googlephotos-devanced-v7.92", "20T04:56", photos)]
+        def filtered_count(items, word):
+            count = 0
+            for r in sorted(items, key=lambda r: r["published_at"], reverse=True):
+                if r["prerelease"]:
+                    continue
+                if any(word in a["name"] for a in r["assets"]):
+                    return count
+                count += 1
+            raise AssertionError("App APK disappeared")
+        self.assertEqual(filtered_count(rows, "photos"), 6)
+        self.assertEqual(filtered_count(rows, "music"), 5)
+        original = copy.deepcopy(rows)
+        retired = {r["tag_name"] for r in module.historical_releases(rows)}
+        self.assertEqual(rows, original)
+        self.assertNotIn("26", retired)
+        for r in rows:
+            if r["tag_name"] in retired:
+                r["prerelease"] = True
+        self.assertEqual(filtered_count(rows, "photos"), 4)
+        self.assertEqual(filtered_count(rows, "music"), 3)
+        rows.extend([release("29", "24T19:54", "twitter-piko-v12.37-all.apk"),
+                     release("twitter-piko-v12.37", "24T19:55", "twitter-piko-v12.37-all.apk")])
+        for r in module.historical_releases(rows):
+            r["prerelease"] = True
+        self.assertEqual(filtered_count(rows, "photos"), 4)
+        self.assertEqual(filtered_count(rows, "music"), 3)
+        self.assertEqual([r["assets"] for r in rows[:len(original)]],
+                         [r["assets"] for r in original])
+
+    def test_history_changes_abort_if_a_current_app_release_is_missing(self):
+        with self.assertRaises(RuntimeError):
+            module.historical_releases([])
+
     def test_versions_and_modules(self):
         self.assertEqual(module.identify("googlephotos-devanced-v7.92.0.977185651-all.apk"),
                          ("googlephotos-devanced", "7.92.0.977185651"))
