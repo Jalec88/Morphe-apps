@@ -79,10 +79,10 @@ jobs:
           if (( ${#release_files[@]} == 0 )); then
             echo "APKs are published under application version tags."
           elif gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Release" --notes "$BODY"
+            gh release edit "$TAG" --title "Build $TAG (history)" --notes "$BODY" --prerelease --latest=false
             gh release upload "$TAG" "${release_files[@]}" --clobber
           else
-            gh release create "$TAG" "${release_files[@]}" --title "Release" --notes "$BODY"
+            gh release create "$TAG" "${release_files[@]}" --title "Build $TAG (history)" --notes "$BODY" --prerelease --latest=false
           fi
 
       - name: Publish APKs with application versions for Obtainium
@@ -145,7 +145,9 @@ jobs:
               case "$OUTPUT" in
                 googlephotos-devanced-v*|music-morphe-v*|youtube-morphe-v*|reddit-morphe-v*)
                   VERSION="${OUTPUT#*-v}"
-                  VERSION="${VERSION%-*.apk}"
+                  for ARCH in arm64-v8a arm-v7a all x86_64 x86; do
+                    VERSION="${VERSION%-${ARCH}.apk}"
+                  done
                   DL_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${VERSION}/${OUTPUT}"
                   ;;
               esac
